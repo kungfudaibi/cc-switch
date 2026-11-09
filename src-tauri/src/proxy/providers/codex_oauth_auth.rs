@@ -24,7 +24,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, RwLock as StdRwLock,
 };
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
@@ -33,6 +33,30 @@ use uuid::Uuid;
 use super::copilot_auth::{GitHubAccount, GitHubDeviceCodeResponse};
 
 mod browser;
+
+pub const CHATGPT_PROXY_CONFIG_KEY: &str = "chatgpt_account_proxy_config";
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChatgptProxyConfig {
+    pub enabled: bool,
+    pub url: String,
+}
+
+impl ChatgptProxyConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        let url = self.url.trim();
+        let parsed = reqwest::Url::parse(url).map_err(|e| format!("Invalid proxy URL: {e}"))?;
+        if parsed.host_str().is_none() {
+            return Err(
+                "Proxy URL must include a host (for example http://127.0.0.1:7890)".to_string(),
+            );
+        }
+        crate::proxy::http_client::login_client(Some(url)).map(|_| ())
+    }
+}
 
 /// OpenAI OAuth 客户端 ID（OpenCode 使用，与官方 Codex CLI 相同）
 const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -374,6 +398,7 @@ pub(crate) struct ManagedTokenBundle {
 
 /// Codex OAuth 认证管理器（多账号）
 pub struct CodexOAuthManager {
+    account_proxy_client: StdRwLock<Option<reqwest::Client>>,
     accounts: Arc<RwLock<HashMap<String, CodexAccountData>>>,
     default_account_id: Arc<RwLock<Option<String>>>,
     /// 内存缓存的 access_token（不持久化）
@@ -405,6 +430,7 @@ impl CodexOAuthManager {
         let storage_path = data_dir.join("codex_oauth_auth.json");
 
         let manager = Self {
+            account_proxy_client: StdRwLock::new(None),
             accounts: Arc::new(RwLock::new(HashMap::new())),
             default_account_id: Arc::new(RwLock::new(None)),
             access_tokens: Arc::new(RwLock::new(HashMap::new())),
@@ -425,6 +451,30 @@ impl CodexOAuthManager {
         }
 
         manager
+    }
+
+    pub fn account_client(&self) -> reqwest::Client {
+        self.account_proxy_client
+            .read()
+            .ok()
+            .and_then(|client| client.clone())
+            .unwrap_or_else(crate::proxy::http_client::get)
+    }
+
+    pub fn set_account_proxy(&self, config: &ChatgptProxyConfig) -> Result<(), String> {
+        config.validate()?;
+        let client = if config.enabled {
+            Some(crate::proxy::http_client::login_client(Some(
+                config.url.trim(),
+            ))?)
+        } else {
+            None
+        };
+        *self
+            .account_proxy_client
+            .write()
+            .map_err(|e| e.to_string())? = client;
+        Ok(())
     }
 
     // ==================== 设备码流程 ====================
@@ -760,7 +810,8 @@ impl CodexOAuthManager {
         &self,
         refresh_token: &str,
     ) -> Result<OAuthTokenResponse, CodexOAuthError> {
-        let response = crate::proxy::http_client::get()
+        let response = self
+            .account_client()
             .post(OAUTH_TOKEN_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/x-www-form-urlencoded")
@@ -2226,6 +2277,30 @@ fn extract_account_metadata_from_tokens(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_proxy_config_requires_a_valid_host_when_enabled() {
+        for url in ["", "http:127.0.0.1:7890", "ftp://127.0.0.1:7890"] {
+            assert!(ChatgptProxyConfig {
+                enabled: true,
+                url: url.into()
+            }
+            .validate()
+            .is_err());
+        }
+        assert!(ChatgptProxyConfig {
+            enabled: true,
+            url: "http://127.0.0.1:7890".into(),
+        }
+        .validate()
+        .is_ok());
+        assert!(ChatgptProxyConfig {
+            enabled: false,
+            url: String::new()
+        }
+        .validate()
+        .is_ok());
+    }
 
     #[tokio::test]
     async fn missing_account_recovery_requires_valid_persisted_state() {

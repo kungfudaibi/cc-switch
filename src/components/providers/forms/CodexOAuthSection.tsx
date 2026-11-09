@@ -1,4 +1,5 @@
 import React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,11 @@ import {
 } from "@/components/ui/select";
 import { Loader2, Plus, AlertTriangle, RefreshCw } from "lucide-react";
 import { useCodexOauth } from "./hooks/useCodexOauth";
-import type { CodexLoginMethod } from "@/lib/api/auth";
+import {
+  getChatgptProxyConfig,
+  setChatgptProxyConfig,
+  type CodexLoginMethod,
+} from "@/lib/api/auth";
 import {
   ManagedAccountRemoveDialog,
   type ManagedAccountRemoveTarget,
@@ -98,11 +103,59 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   helpSide,
 }) => {
   const { t, i18n } = useTranslation();
+  const queryClient = useQueryClient();
   const [loginMethod, setLoginMethod] =
     React.useState<CodexLoginMethod>("browser");
   const loginProxyId = React.useId();
   const [loginProxyEnabled, setLoginProxyEnabled] = React.useState(false);
   const [loginProxyUrl, setLoginProxyUrl] = React.useState("");
+  const [savedProxy, setSavedProxy] = React.useState<{
+    enabled: boolean;
+    url: string;
+  } | null>(null);
+  const [proxyLoading, setProxyLoading] = React.useState(mode === "manage");
+  const [proxySaving, setProxySaving] = React.useState(false);
+  React.useEffect(() => {
+    if (mode !== "manage") return;
+    let active = true;
+    getChatgptProxyConfig()
+      .then((config) => {
+        if (!active) return;
+        setSavedProxy(config);
+        setLoginProxyEnabled(config.enabled);
+        setLoginProxyUrl(config.url);
+      })
+      .catch((error) => {
+        if (active) toast.error(String(error));
+      })
+      .finally(() => {
+        if (active) setProxyLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [mode]);
+  const proxyDirty =
+    savedProxy !== null &&
+    (savedProxy.enabled !== loginProxyEnabled ||
+      savedProxy.url !== loginProxyUrl.trim());
+  const saveProxy = async () => {
+    setProxySaving(true);
+    try {
+      const config = { enabled: loginProxyEnabled, url: loginProxyUrl.trim() };
+      await setChatgptProxyConfig(config);
+      setSavedProxy(config);
+      setLoginProxyUrl(config.url);
+      await queryClient.invalidateQueries({
+        queryKey: ["codex_oauth", "quota"],
+      });
+      toast.success(t("authCenter.loginProxy.saved"));
+    } catch (error) {
+      toast.error(String(error));
+    } finally {
+      setProxySaving(false);
+    }
+  };
   const loginProxyOverride =
     mode === "manage"
       ? loginProxyEnabled
@@ -132,6 +185,14 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     refetchStatus,
   } = useCodexOauth(loginMethod, loginProxyOverride);
   const withLoginProxy = (start: () => void) => {
+    if (proxyLoading || savedProxy === null) {
+      toast.error(t("authCenter.loginProxy.loading"));
+      return;
+    }
+    if (proxyDirty || proxySaving) {
+      toast.error(t("authCenter.loginProxy.saveFirst"));
+      return;
+    }
     if (loginProxyEnabled && !loginProxyUrl.trim()) {
       toast.error(t("authCenter.loginProxy.required"));
       return;
@@ -499,7 +560,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
               id={loginProxyId}
               checked={loginProxyEnabled}
               onCheckedChange={setLoginProxyEnabled}
-              disabled={isAddingAccount}
+              disabled={isAddingAccount || proxyLoading || proxySaving}
             />
           </div>
           {loginProxyEnabled && (
@@ -508,11 +569,27 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
               placeholder="http://127.0.0.1:7890"
               value={loginProxyUrl}
               onChange={(event) => setLoginProxyUrl(event.target.value)}
-              disabled={isAddingAccount}
+              disabled={isAddingAccount || proxyLoading || proxySaving}
               className="font-mono text-sm"
             />
           )}
           <p className="text-xs text-fg-2">{t("authCenter.loginProxy.hint")}</p>
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => void saveProxy()}
+              disabled={
+                proxyLoading || proxySaving || isAddingAccount || !proxyDirty
+              }
+            >
+              {proxySaving && (
+                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              )}
+              {t("authCenter.loginProxy.save")}
+            </Button>
+          </div>
         </div>
       }
       emptyText={t("authCenter.empty", {
