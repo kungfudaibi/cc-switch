@@ -153,13 +153,23 @@ impl CodexOAuthManager {
     pub async fn start_browser_flow(
         &self,
         target_account_id: Option<&str>,
+        login_proxy_url: Option<&str>,
     ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
-        self.start_browser_flow_at_port(
-            target_account_id,
-            1455,
-            Duration::from_secs(LOGIN_LIFETIME),
-        )
-        .await
+        let client = crate::proxy::http_client::login_client(login_proxy_url)
+            .map_err(CodexOAuthError::TokenFetchFailed)?;
+        let response = self
+            .start_browser_flow_at_port(
+                target_account_id,
+                1455,
+                Duration::from_secs(LOGIN_LIFETIME),
+            )
+            .await?;
+        let mut pending = self.pending_device_codes.write().await;
+        let entry = pending
+            .get_mut(&response.device_code)
+            .ok_or(CodexOAuthError::ExpiredToken)?;
+        entry.client = client;
+        Ok(response)
     }
 
     async fn start_browser_flow_at_port(
@@ -206,6 +216,7 @@ impl CodexOAuthManager {
             epoch,
             target,
             generation,
+            crate::proxy::http_client::get(),
         )
         .await?;
         let pending = Arc::downgrade(&self.pending_device_codes);
@@ -309,7 +320,7 @@ impl CodexOAuthManager {
         flow.stop().await;
         let result = async {
             let tokens = self
-                .exchange_code_for_tokens(&code, &flow.verifier, REDIRECT_URI)
+                .exchange_code_for_tokens(&entry.client, &code, &flow.verifier, REDIRECT_URI)
                 .await?;
             let _commit_guard = before_commit().await;
             self.commit_login_tokens(tokens, flow_id, &entry)

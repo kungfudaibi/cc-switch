@@ -5021,6 +5021,12 @@
   },
   "authCenter": {
     "helpTitle": "What is Accounts?",
+    "loginProxy": {
+      "label": "Use a proxy for this ChatGPT sign-in",
+      "url": "Sign-in proxy URL",
+      "hint": "Only device-code and token requests for this sign-in use this proxy. Global outbound proxy and model requests stay unchanged. Browser authorization follows the browser's proxy settings.",
+      "required": "Enter a sign-in proxy URL."
+    },
     "group": {
       "helpTitle": "How {{service}} accounts are used",
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",

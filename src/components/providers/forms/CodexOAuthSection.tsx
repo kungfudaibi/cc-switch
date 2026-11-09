@@ -1,6 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -22,6 +23,7 @@ import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import CodexOauthAccountQuota from "@/components/CodexOauthAccountQuota";
 import { cn } from "@/lib/utils";
 import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
+import { toast } from "@/lib/toast";
 import {
   ManagedAccountsGroup,
   type GroupAccountRow,
@@ -98,6 +100,15 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
   const { t, i18n } = useTranslation();
   const [loginMethod, setLoginMethod] =
     React.useState<CodexLoginMethod>("browser");
+  const loginProxyId = React.useId();
+  const [loginProxyEnabled, setLoginProxyEnabled] = React.useState(false);
+  const [loginProxyUrl, setLoginProxyUrl] = React.useState("");
+  const loginProxyOverride =
+    mode === "manage"
+      ? loginProxyEnabled
+        ? loginProxyUrl.trim()
+        : ""
+      : undefined;
 
   const {
     accounts,
@@ -119,7 +130,14 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
     setDefaultAccount,
     cancelAuth,
     refetchStatus,
-  } = useCodexOauth(loginMethod);
+  } = useCodexOauth(loginMethod, loginProxyOverride);
+  const withLoginProxy = (start: () => void) => {
+    if (loginProxyEnabled && !loginProxyUrl.trim()) {
+      toast.error(t("authCenter.loginProxy.required"));
+      return;
+    }
+    start();
+  };
   const accountUsers = useManagedAccountUsers("codex_oauth", defaultAccountId);
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
@@ -471,11 +489,37 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         defaultValue: "无法加载 ChatGPT 账号状态，请重试。",
       })}
       onRetryStatus={() => void refetchStatus()}
+      notice={
+        <div className="space-y-2 border-t border-border pt-3">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor={loginProxyId} className="text-sm text-fg-1">
+              {t("authCenter.loginProxy.label")}
+            </Label>
+            <Switch
+              id={loginProxyId}
+              checked={loginProxyEnabled}
+              onCheckedChange={setLoginProxyEnabled}
+              disabled={isAddingAccount}
+            />
+          </div>
+          {loginProxyEnabled && (
+            <Input
+              aria-label={t("authCenter.loginProxy.url")}
+              placeholder="http://127.0.0.1:7890"
+              value={loginProxyUrl}
+              onChange={(event) => setLoginProxyUrl(event.target.value)}
+              disabled={isAddingAccount}
+              className="font-mono text-sm"
+            />
+          )}
+          <p className="text-xs text-fg-2">{t("authCenter.loginProxy.hint")}</p>
+        </div>
+      }
       emptyText={t("authCenter.empty", {
         defaultValue: "还没有登录 {{service}} 账号。",
         service: "ChatGPT",
       })}
-      onAdd={addAccount}
+      onAdd={() => withLoginProxy(addAccount)}
       loginControl={
         <Select
           value={loginMethod}
@@ -499,7 +543,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         </Select>
       }
       canReauth
-      onReauth={reauthAccount}
+      onReauth={(accountId) => withLoginProxy(() => reauthAccount(accountId))}
       onSetDefault={setDefaultAccount}
       settingDefault={isSettingDefaultAccount}
       onRemove={(accountId, login) =>
@@ -513,7 +557,7 @@ export const CodexOAuthSection: React.FC<CodexOAuthSectionProps> = ({
         deviceCode,
         error,
         onCancel: cancelAuth,
-        onRetry: retryAuth,
+        onRetry: () => withLoginProxy(retryAuth),
       }}
     >
       <ManagedAccountRemoveDialog

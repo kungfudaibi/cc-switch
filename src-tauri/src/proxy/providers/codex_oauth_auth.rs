@@ -248,6 +248,8 @@ impl RefreshTokenAdoptionOutcome {
 #[derive(Debug, Clone)]
 struct PendingDeviceCode {
     user_code: String,
+    /// 本次登录独立使用的 HTTP 客户端，覆盖设备码轮询和 token 交换。
+    client: reqwest::Client,
     /// Unix 毫秒时间戳，超时后可清理
     expires_at_ms: i64,
     /// 仅重新认证时设置；登录完成后原位更新该本地账号，保留 provider 绑定。
@@ -436,12 +438,15 @@ impl CodexOAuthManager {
     pub async fn start_device_flow(
         &self,
         target_account_id: Option<&str>,
+        login_proxy_url: Option<&str>,
     ) -> Result<GitHubDeviceCodeResponse, CodexOAuthError> {
+        let client = crate::proxy::http_client::login_client(login_proxy_url)
+            .map_err(CodexOAuthError::TokenFetchFailed)?;
         log::info!("[CodexOAuth] 启动 Device Code 流程");
         let (login_epoch, target_account_id, target_generation) =
             self.prepare_login_target(target_account_id).await?;
 
-        let response = crate::proxy::http_client::get()
+        let response = client
             .post(DEVICE_AUTH_USERCODE_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/json")
@@ -474,6 +479,7 @@ impl CodexOAuthManager {
             login_epoch,
             target_account_id,
             target_generation,
+            client,
         )
         .await?;
 
@@ -531,6 +537,7 @@ impl CodexOAuthManager {
         login_epoch: u64,
         target_account_id: Option<String>,
         target_generation: Option<u64>,
+        client: reqwest::Client,
     ) -> Result<(), CodexOAuthError> {
         let mut pending = self.pending_device_codes.write().await;
         if self.login_epoch.load(Ordering::Acquire) != login_epoch {
@@ -543,6 +550,7 @@ impl CodexOAuthManager {
             device_auth_id,
             PendingDeviceCode {
                 user_code,
+                client,
                 expires_at_ms,
                 target_account_id,
                 target_generation,
@@ -601,7 +609,8 @@ impl CodexOAuthManager {
 
         log::debug!("[CodexOAuth] 轮询 Device Code");
 
-        let poll_response = crate::proxy::http_client::get()
+        let poll_response = entry
+            .client
             .post(DEVICE_AUTH_TOKEN_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/json")
@@ -641,6 +650,7 @@ impl CodexOAuthManager {
         // 用 authorization_code + code_verifier 换 token
         let tokens = self
             .exchange_code_for_tokens(
+                &entry.client,
                 &success.authorization_code,
                 &success.code_verifier,
                 DEVICE_REDIRECT_URI,
@@ -711,11 +721,12 @@ impl CodexOAuthManager {
     /// 用 authorization_code + code_verifier 换取 tokens
     async fn exchange_code_for_tokens(
         &self,
+        client: &reqwest::Client,
         code: &str,
         code_verifier: &str,
         redirect_uri: &str,
     ) -> Result<OAuthTokenResponse, CodexOAuthError> {
-        let response = crate::proxy::http_client::get()
+        let response = client
             .post(OAUTH_TOKEN_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
             .header("Content-Type", "application/x-www-form-urlencoded")
@@ -3261,6 +3272,7 @@ mod tests {
             "device-auth-id".to_string(),
             PendingDeviceCode {
                 user_code: "ABCD-EFGH".to_string(),
+                client: reqwest::Client::new(),
                 expires_at_ms: chrono::Utc::now().timestamp_millis() + 60_000,
                 target_account_id: None,
                 target_generation: None,
@@ -3302,6 +3314,7 @@ mod tests {
                 login_epoch,
                 None,
                 None,
+                reqwest::Client::new(),
             )
             .await;
 
@@ -3321,6 +3334,7 @@ mod tests {
                 manager.login_epoch.load(Ordering::Acquire),
                 Some("target-account".to_string()),
                 None,
+                reqwest::Client::new(),
             )
             .await
             .unwrap();
@@ -3358,6 +3372,7 @@ mod tests {
                 manager.login_epoch.load(Ordering::Acquire),
                 Some(existing.id.clone()),
                 Some(1),
+                reqwest::Client::new(),
             )
             .await
             .unwrap();
@@ -3440,6 +3455,7 @@ mod tests {
                 device_code.to_string(),
                 PendingDeviceCode {
                     user_code: "ABCD-EFGH".to_string(),
+                    client: reqwest::Client::new(),
                     expires_at_ms: chrono::Utc::now().timestamp_millis() + 60_000,
                     target_account_id: Some(existing.id.clone()),
                     target_generation: Some(generation),
@@ -3498,6 +3514,7 @@ mod tests {
             "expired-flow".to_string(),
             PendingDeviceCode {
                 user_code: "ABCD-EFGH".to_string(),
+                client: reqwest::Client::new(),
                 expires_at_ms: chrono::Utc::now().timestamp_millis() - 1,
                 target_account_id: None,
                 target_generation: None,

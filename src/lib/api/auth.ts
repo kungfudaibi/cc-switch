@@ -65,12 +65,14 @@ export async function authStartLogin(
   githubDomain?: string,
   targetAccountId?: string,
   loginMethod?: ManagedLoginMethod,
+  loginProxyUrl?: string,
 ): Promise<ManagedAuthDeviceCodeResponse> {
   return invoke<ManagedAuthDeviceCodeResponse>("auth_start_login", {
     authProvider,
     githubDomain: githubDomain || null,
     targetAccountId: targetAccountId || null,
     ...(loginMethod ? { loginMethod } : {}),
+    loginProxyUrl: loginProxyUrl ?? null,
   });
 }
 

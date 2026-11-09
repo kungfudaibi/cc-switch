@@ -5021,6 +5021,12 @@
   },
   "authCenter": {
     "helpTitle": "授权中心是什么",
+    "loginProxy": {
+      "label": "本次 ChatGPT 登录使用代理",
+      "url": "登录代理地址",
+      "hint": "仅用于当前登录的设备码和令牌请求，不改变全局出站代理或模型请求。关闭时登录直连；浏览器授权仍按浏览器的代理设置。",
+      "required": "请填写登录代理地址。"
+    },
     "group": {
       "helpTitle": "{{service}} 账号怎么用",
       "copilotHelp": "用于 Claude Code、Claude Desktop 的 GitHub Copilot 预设。没指定账号的供应商用「默认」账号。",
