@@ -126,7 +126,11 @@ export function useManagedAuth(
   }, [cancelBackendFlow, stopPolling]);
 
   const startLoginMutation = useMutation({
-    mutationFn: ({ targetAccountId, loginMethod, loginProxyUrl }: LoginRequest) =>
+    mutationFn: ({
+      targetAccountId,
+      loginMethod,
+      loginProxyUrl,
+    }: LoginRequest) =>
       authApi.authStartLogin(
         authProvider,
         githubDomain,
