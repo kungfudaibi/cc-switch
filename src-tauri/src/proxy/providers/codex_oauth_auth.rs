@@ -529,12 +529,14 @@ impl CodexOAuthManager {
 
         self.register_pending_device_code(
             device.device_auth_id.clone(),
-            device.user_code.clone(),
-            expires_at_ms,
             login_epoch,
-            target_account_id,
-            target_generation,
-            client,
+            PendingDeviceCode {
+                user_code: device.user_code.clone(),
+                client,
+                expires_at_ms,
+                target_account_id,
+                target_generation,
+            },
         )
         .await?;
 
@@ -587,12 +589,8 @@ impl CodexOAuthManager {
     async fn register_pending_device_code(
         &self,
         device_auth_id: String,
-        user_code: String,
-        expires_at_ms: i64,
         login_epoch: u64,
-        target_account_id: Option<String>,
-        target_generation: Option<u64>,
-        client: reqwest::Client,
+        entry: PendingDeviceCode,
     ) -> Result<(), CodexOAuthError> {
         let mut pending = self.pending_device_codes.write().await;
         if self.login_epoch.load(Ordering::Acquire) != login_epoch {
@@ -601,16 +599,7 @@ impl CodexOAuthManager {
 
         let now_ms = chrono::Utc::now().timestamp_millis();
         pending.retain(|_, entry| entry.expires_at_ms > now_ms);
-        pending.insert(
-            device_auth_id,
-            PendingDeviceCode {
-                user_code,
-                client,
-                expires_at_ms,
-                target_account_id,
-                target_generation,
-            },
-        );
+        pending.insert(device_auth_id, entry);
         Ok(())
     }
 
@@ -3389,12 +3378,14 @@ mod tests {
         let result = manager
             .register_pending_device_code(
                 "stale-device-auth-id".to_string(),
-                "ABCD-EFGH".to_string(),
-                chrono::Utc::now().timestamp_millis() + 60_000,
                 login_epoch,
-                None,
-                None,
-                reqwest::Client::new(),
+                PendingDeviceCode {
+                    user_code: "ABCD-EFGH".to_string(),
+                    client: reqwest::Client::new(),
+                    expires_at_ms: chrono::Utc::now().timestamp_millis() + 60_000,
+                    target_account_id: None,
+                    target_generation: None,
+                },
             )
             .await;
 
@@ -3409,12 +3400,14 @@ mod tests {
         manager
             .register_pending_device_code(
                 "cancelled-device-auth-id".to_string(),
-                "ABCD-EFGH".to_string(),
-                chrono::Utc::now().timestamp_millis() + 60_000,
                 manager.login_epoch.load(Ordering::Acquire),
-                Some("target-account".to_string()),
-                None,
-                reqwest::Client::new(),
+                PendingDeviceCode {
+                    user_code: "ABCD-EFGH".to_string(),
+                    client: reqwest::Client::new(),
+                    expires_at_ms: chrono::Utc::now().timestamp_millis() + 60_000,
+                    target_account_id: Some("target-account".to_string()),
+                    target_generation: None,
+                },
             )
             .await
             .unwrap();
@@ -3447,12 +3440,14 @@ mod tests {
         manager
             .register_pending_device_code(
                 "cancelled-waiting-flow".to_string(),
-                "ABCD-EFGH".to_string(),
-                chrono::Utc::now().timestamp_millis() + 60_000,
                 manager.login_epoch.load(Ordering::Acquire),
-                Some(existing.id.clone()),
-                Some(1),
-                reqwest::Client::new(),
+                PendingDeviceCode {
+                    user_code: "ABCD-EFGH".to_string(),
+                    client: reqwest::Client::new(),
+                    expires_at_ms: chrono::Utc::now().timestamp_millis() + 60_000,
+                    target_account_id: Some(existing.id.clone()),
+                    target_generation: Some(1),
+                },
             )
             .await
             .unwrap();

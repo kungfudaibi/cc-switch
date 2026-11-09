@@ -211,12 +211,14 @@ impl CodexOAuthManager {
         let expires_at = chrono::Utc::now().timestamp_millis() + lifetime.as_millis() as i64;
         self.register_pending_device_code(
             flow_id.clone(),
-            String::new(),
-            expires_at,
             epoch,
-            target,
-            generation,
-            crate::proxy::http_client::get(),
+            PendingDeviceCode {
+                user_code: String::new(),
+                client: crate::proxy::http_client::get(),
+                expires_at_ms: expires_at,
+                target_account_id: target,
+                target_generation: generation,
+            },
         )
         .await?;
         let pending = Arc::downgrade(&self.pending_device_codes);
